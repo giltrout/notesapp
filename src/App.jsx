@@ -29,6 +29,9 @@ const client = generateClient({
 
 export default function App() {
   const [notes, setNotes] = useState([]);
+  const [editingNote, setEditingNote] = useState(null);
+  const [noteName, setNoteName] = useState("");
+  const [noteDescription, setNoteDescription] = useState("");
 
   useEffect(() => {
     fetchNotes();
@@ -36,43 +39,74 @@ export default function App() {
 
   async function fetchNotes() {
     const { data: notes } = await client.models.Note.list();
-    await Promise.all(
+    const notesWithImages = await Promise.all(
       notes.map(async (note) => {
+        const imageKey = note.image;
         if (note.image) {
           const linkToStorageFile = await getUrl({
             path: ({ identityId }) => `media/${identityId}/${note.image}`,
           });
-          console.log(linkToStorageFile.url);
-          note.image = linkToStorageFile.url;
+          return { ...note, imageKey, image: linkToStorageFile.url };
         }
-        return note;
+        return { ...note, imageKey };
       })
     );
-    console.log(notes);
-    setNotes(notes);
+    setNotes(notesWithImages);
   }
 
   async function createNote(event) {
     event.preventDefault();
     const form = new FormData(event.target);
-    console.log(form.get("image").name);
+    const image = form.get("image");
 
-    const { data: newNote } = await client.models.Note.create({
-      name: form.get("name"),
-      description: form.get("description"),
-      image: form.get("image").name,
-    });
+    if (editingNote) {
+      const update = {
+        id: editingNote.id,
+        name: noteName,
+        description: noteDescription,
+      };
 
-    console.log(newNote);
-    if (newNote.image)
-      if (newNote.image)
+      if (image.size > 0) {
+        await uploadData({
+          path: ({ identityId }) => `media/${identityId}/${image.name}`,
+          data: image,
+        }).result;
+        update.image = image.name;
+      }
+
+      await client.models.Note.update(update);
+    } else {
+      const { data: newNote } = await client.models.Note.create({
+        name: noteName,
+        description: noteDescription,
+        image: image.name,
+      });
+
+      if (image.size > 0 && newNote.image) {
         await uploadData({
           path: ({ identityId }) => `media/${identityId}/${newNote.image}`,
-          data: form.get("image"),
+          data: image,
         }).result;
+      }
+    }
 
-    fetchNotes();
+    await fetchNotes();
+    setEditingNote(null);
+    setNoteName("");
+    setNoteDescription("");
     event.target.reset();
+  }
+
+  function editNote(note) {
+    setEditingNote({ id: note.id, image: note.imageKey });
+    setNoteName(note.name);
+    setNoteDescription(note.description);
+  }
+
+  function cancelEdit() {
+    setEditingNote(null);
+    setNoteName("");
+    setNoteDescription("");
   }
 
   async function deleteNote({ id }) {
@@ -100,7 +134,12 @@ export default function App() {
           margin="0 auto"
         >
           <Heading level={1}>Sofia and Elena's Notes App</Heading>
-          <View as="form" margin="3rem 0" onSubmit={createNote}>
+          <View
+            key={editingNote?.id || "new-note"}
+            as="form"
+            margin="3rem 0"
+            onSubmit={createNote}
+          >
             <Flex
               direction="column"
               justifyContent="center"
@@ -109,6 +148,8 @@ export default function App() {
             >
               <TextField
                 name="name"
+                value={noteName}
+                onChange={(event) => setNoteName(event.target.value)}
                 placeholder="Note Name"
                 label="Note Name"
                 labelHidden
@@ -117,6 +158,8 @@ export default function App() {
               />
               <TextField
                 name="description"
+                value={noteDescription}
+                onChange={(event) => setNoteDescription(event.target.value)}
                 placeholder="Note Description"
                 label="Note Description"
                 labelHidden
@@ -132,8 +175,13 @@ export default function App() {
               />
 
               <Button type="submit" variation="primary">
-                Create Note
+                {editingNote ? "Save Changes" : "Create Note"}
               </Button>
+              {editingNote && (
+                <Button type="button" onClick={cancelEdit}>
+                  Cancel
+                </Button>
+              )}
             </Flex>
           </View>
           <Divider />
@@ -164,10 +212,11 @@ export default function App() {
                 {note.image && (
                   <Image
                     src={note.image}
-                    alt={`visual aid for ${notes.name}`}
+                    alt={`visual aid for ${note.name}`}
                     style={{ width: 400 }}
                   />
                 )}
+                <Button onClick={() => editNote(note)}>Edit note</Button>
                 <Button
                   variation="destructive"
                   onClick={() => deleteNote(note)}
